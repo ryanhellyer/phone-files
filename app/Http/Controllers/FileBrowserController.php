@@ -15,6 +15,14 @@ class FileBrowserController extends Controller
     private const IMAGE_EXTENSIONS = ['avif', 'jpg', 'jpeg', 'png', 'webp'];
 
     /**
+     * Video extensions that open in the in-browser player instead of downloading.
+     */
+    private const VIDEO_EXTENSIONS = [
+        'mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg',
+        'mkv', 'avi', 'mpg', 'mpeg', '3gp', '3g2', 'mts', 'm2ts', 'ts',
+    ];
+
+    /**
      * Square thumbnail widths (px) offered to the browser via srcset.
      */
     private const THUMBNAIL_SIZES = [96, 192, 288, 384];
@@ -241,7 +249,9 @@ class FileBrowserController extends Controller
             }
 
             $size = is_file($full) ? (int) filesize($full) : 0;
-            $isImage = in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), self::IMAGE_EXTENSIONS, true);
+            $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+            $isImage = in_array($extension, self::IMAGE_EXTENSIONS, true);
+            $isVideo = in_array($extension, self::VIDEO_EXTENSIONS, true);
             $url = '/files/'.$this->encodePath($rel);
 
             $entries[] = [
@@ -251,6 +261,7 @@ class FileBrowserController extends Controller
                 'size' => $size,
                 'size_label' => $this->humanSize($size),
                 'is_image' => $isImage,
+                'is_video' => $isVideo,
                 'url' => $url,
                 'thumbnail' => $isImage ? thumbnail_url($url, self::THUMBNAIL_SIZES[0], self::THUMBNAIL_SIZES[0]) : null,
                 'srcset' => $isImage ? $this->thumbnailSrcset($url) : null,

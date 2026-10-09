@@ -190,6 +190,7 @@
     color: var(--accent-ink);
   }
   .row.file .glyph { background: #eef0ec; color: var(--ink-2); }
+  .row.file.video .glyph { background: var(--accent-soft); color: var(--accent-ink); }
   .glyph svg { width: 19px; height: 19px; }
 
   .row .name {
@@ -416,6 +417,14 @@
     box-shadow: 0 20px 60px rgba(0,0,0,.5);
   }
 
+  .lightbox video {
+    max-width: min(92vw, 880px);
+    max-height: 76vh;
+    border-radius: 10px;
+    background: #000;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+
   /* ---------- toast ---------- */
   .toast {
     position: fixed;
@@ -523,6 +532,7 @@
     </div>
   </div>
   <img id="lbImg" alt="">
+  <video id="lbVideo" controls playsinline preload="metadata" style="display:none"></video>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -544,11 +554,14 @@
         upBtn = $("upBtn"), selectBtn = $("selectBtn"), invertBtn = $("invertBtn"),
         delBtn = $("delBtn"), keepBtn = $("keepBtn"), delLabel = $("delLabel"),
         toastEl = $("toast"), lightbox = $("lightbox"), lbImg = $("lbImg"),
+        lbVideo = $("lbVideo"),
         lbName = $("lbName"), lbDl = $("lbDl"), sortEl = $("sort");
 
   const ICONS = {
     dir:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
     file:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/></svg>',
+    video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2.2"/><path d="M16 10.5l5-2.8v8.6l-5-2.8z"/></svg>',
+    play:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M10 8.6l6 3.4-6 3.4z" fill="currentColor"/></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
     chev:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
     dl:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M4.5 20h15"/></svg>',
@@ -677,7 +690,7 @@
 
   function makeRow(item) {
     const row = document.createElement("div");
-    row.className = item.type === "dir" ? "row folder" : "row file";
+    row.className = item.type === "dir" ? "row folder" : (item.is_video ? "row file video" : "row file");
     row.dataset.name = item.name;
     row.dataset.path = item.path;
 
@@ -687,7 +700,7 @@
 
     const glyph = document.createElement("span");
     glyph.className = "glyph";
-    glyph.innerHTML = item.type === "dir" ? ICONS.dir : ICONS.file;
+    glyph.innerHTML = item.type === "dir" ? ICONS.dir : (item.is_video ? ICONS.video : ICONS.file);
 
     const name = document.createElement("span");
     name.className = "name";
@@ -709,7 +722,7 @@
     } else {
       const hint = document.createElement("span");
       hint.className = "dl-hint";
-      hint.innerHTML = ICONS.dl;
+      hint.innerHTML = item.is_video ? ICONS.play : ICONS.dl;
       row.appendChild(hint);
     }
 
@@ -718,6 +731,7 @@
       if (consumedByLongPress(e)) return;
       if (selecting) return toggleSelected(item, row);
       if (item.type === "dir") navigate(item.path);
+      else if (item.is_video) openLightbox(item);
       else download(item);
     });
 
@@ -888,15 +902,33 @@
 
   function openLightbox(item) {
     lightboxItem = item;
-    lbImg.src = item.url;
-    lbImg.alt = item.name;
     lbName.textContent = item.name;
     lbDl.href = item.url;
     lbDl.download = item.name;
+
+    if (item.is_video) {
+      // Play videos inline (with native controls) instead of downloading.
+      lbImg.style.display = "none";
+      lbImg.removeAttribute("src");
+      lbVideo.style.display = "block";
+      lbVideo.src = item.url;
+    } else {
+      lbVideo.pause();
+      lbVideo.style.display = "none";
+      lbVideo.removeAttribute("src");
+      lbVideo.load();
+      lbImg.style.display = "block";
+      lbImg.src = item.url;
+      lbImg.alt = item.name;
+    }
+
     lightbox.classList.add("open");
   }
 
-  function closeLightbox() { lightbox.classList.remove("open"); }
+  function closeLightbox() {
+    lightbox.classList.remove("open");
+    lbVideo.pause();
+  }
 
   $("lbClose").addEventListener("click", closeLightbox);
   lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
