@@ -108,6 +108,29 @@
   }
   .crumbs::-webkit-scrollbar { display: none; }
 
+  .sort {
+    flex: 0 0 auto;
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .sort button {
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: .74rem;
+    font-weight: 650;
+    color: var(--ink-2);
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .sort button + button { border-left: 1px solid var(--line); }
+  .sort button:hover { color: var(--ink); }
+  .sort button.active { background: var(--accent-soft); color: var(--accent-ink); }
+
   .crumb {
     border: none;
     background: none;
@@ -452,6 +475,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
     </button>
     <nav class="crumbs" id="crumbs" aria-label="Directory path"></nav>
+    <div class="sort" id="sort" role="group" aria-label="Sort by">
+      <button type="button" data-sort="name" class="active">Name</button>
+      <button type="button" data-sort="newest">Newest</button>
+      <button type="button" data-sort="oldest">Oldest</button>
+    </div>
   </div>
 
   <main>
@@ -516,7 +544,7 @@
         upBtn = $("upBtn"), selectBtn = $("selectBtn"), invertBtn = $("invertBtn"),
         delBtn = $("delBtn"), keepBtn = $("keepBtn"), delLabel = $("delLabel"),
         toastEl = $("toast"), lightbox = $("lightbox"), lbImg = $("lbImg"),
-        lbName = $("lbName"), lbDl = $("lbDl");
+        lbName = $("lbName"), lbDl = $("lbDl"), sortEl = $("sort");
 
   const ICONS = {
     dir:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
@@ -532,6 +560,7 @@
   const selected = new Set();   // stores entry.path values
   let pressTimer = null;
   let longPressed = false;
+  let currentSort = "name";
 
   let toastTimer = null;
   function toast(msg) {
@@ -541,13 +570,22 @@
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1900);
   }
 
+  function sortCompare(a, b) {
+    if (currentSort === "name") {
+      return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
+    }
+    const da = a.modified_ts || 0;
+    const db = b.modified_ts || 0;
+    return currentSort === "oldest" ? da - db : db - da;
+  }
+
   function itemsAt() {
     const c = dir.entries || [];
     return {
-      dirs: c.filter(i => i.type === "dir"),
-      images: c.filter(i => i.type === "file" && i.is_image),
-      files: c.filter(i => i.type === "file" && !i.is_image),
-      all: c,
+      dirs: c.filter(i => i.type === "dir").sort(sortCompare),
+      images: c.filter(i => i.type === "file" && i.is_image).sort(sortCompare),
+      files: c.filter(i => i.type === "file" && !i.is_image).sort(sortCompare),
+      all: c.slice().sort(sortCompare),
     };
   }
 
@@ -729,7 +767,6 @@
   function render() {
     const { dirs, images, files, all } = itemsAt();
     sectionsEl.innerHTML = "";
-    selected.clear();
     emptyEl.classList.toggle("show", all.length === 0);
 
     const addLabel = (t) => {
@@ -885,6 +922,14 @@
 
   selectBtn.addEventListener("click", () => setSelecting(!selecting));
   $("trashBtn").addEventListener("click", () => { location.href = trashUrl; });
+
+  sortEl.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentSort = btn.dataset.sort;
+      sortEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+      render();
+    });
+  });
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {

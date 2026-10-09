@@ -105,12 +105,15 @@ class FileBrowserController extends Controller
                 $full = $file->getPathname();
                 $relative = ltrim(str_replace('\\', '/', substr($full, strlen($trash))), '/');
                 $size = (int) $file->getSize();
+                $deleted = (int) $file->getCTime();
 
                 $items[] = [
                     'name' => $file->getFilename(),
                     'path' => $relative,
                     'size' => $size,
                     'size_label' => $this->humanSize($size),
+                    'deleted_ts' => $deleted,
+                    'deleted_at' => date('Y-m-d H:i', $deleted),
                 ];
             }
 
@@ -223,6 +226,7 @@ class FileBrowserController extends Controller
 
             $full = $absolute.DIRECTORY_SEPARATOR.$name;
             $rel = $relative === '' ? $name : $relative.'/'.$name;
+            $modified = @filemtime($full) ?: 0;
 
             if (is_dir($full)) {
                 $entries[] = [
@@ -230,6 +234,7 @@ class FileBrowserController extends Controller
                     'name' => $name,
                     'path' => $rel,
                     'count' => $this->countChildren($full),
+                    'modified_ts' => $modified,
                 ];
 
                 continue;
@@ -249,6 +254,7 @@ class FileBrowserController extends Controller
                 'url' => $url,
                 'thumbnail' => $isImage ? thumbnail_url($url, self::THUMBNAIL_SIZES[0], self::THUMBNAIL_SIZES[0]) : null,
                 'srcset' => $isImage ? $this->thumbnailSrcset($url) : null,
+                'modified_ts' => $modified,
             ];
         }
 

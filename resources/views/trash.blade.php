@@ -35,10 +35,22 @@
     text-decoration: none; font-size: .85rem; font-weight: 650; padding: 8px 14px; border-radius: 10px;
   }
   .back:hover { border-color: #ccd6c7; color: var(--ink); }
+  .toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 22px 4px 8px;
+  }
   .section-label {
     font-size: .72rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--ink-3); padding: 22px 4px 8px;
+    color: var(--ink-3);
   }
+  .sort { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--surface); }
+  .sort button {
+    border: none; background: none; font: inherit; font-size: .76rem; font-weight: 650;
+    color: var(--ink-2); padding: 6px 11px; cursor: pointer; transition: background .15s, color .15s;
+  }
+  .sort button + button { border-left: 1px solid var(--line); }
+  .sort button:hover { color: var(--ink); }
+  .sort button.active { background: var(--accent-soft); color: var(--accent-ink); }
   .list { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: hidden; }
   .row {
     display: flex; align-items: center; gap: 13px;
@@ -55,7 +67,9 @@
   .info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-size: .95rem; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .path { font-size: .74rem; font-weight: 600; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meta { flex: 0 0 auto; font-size: .78rem; font-weight: 600; color: var(--ink-3); }
+  .meta { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .meta .size { font-size: .78rem; font-weight: 600; color: var(--ink-3); }
+  .meta .when { font-size: .72rem; font-weight: 600; color: var(--ink-3); }
   .restore {
     flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
     border: none; border-radius: 10px; background: var(--keep); color: #fff;
@@ -75,6 +89,11 @@
     transition: opacity .22s ease, transform .22s ease; white-space: nowrap; z-index: 60;
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  @media (max-width: 480px) {
+    .page { padding: 0 14px 80px; }
+    .row { padding: 11px 12px; gap: 10px; }
+    .meta { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -95,16 +114,27 @@
     </a>
   </div>
 
-  <div class="section-label" id="countLabel">{{ count($items) }} {{ count($items) === 1 ? 'item' : 'items' }}</div>
+  <div class="toolbar" id="toolbar" @if (!count($items)) style="display:none" @endif>
+    <span class="section-label" id="countLabel">{{ count($items) }} {{ count($items) === 1 ? 'item' : 'items' }}</span>
+    <div class="sort" id="sort" role="group" aria-label="Sort trash">
+      <button type="button" data-sort="newest" class="active">Newest</button>
+      <button type="button" data-sort="oldest">Oldest</button>
+      <button type="button" data-sort="name">Name</button>
+    </div>
+  </div>
+
   <div class="list" id="list" @if (!count($items)) style="display:none" @endif>
     @foreach ($items as $item)
-      <div class="row" data-path="{{ $item['path'] }}">
+      <div class="row" data-path="{{ $item['path'] }}" data-name="{{ $item['name'] }}" data-deleted="{{ $item['deleted_ts'] }}">
         <span class="glyph">{!! $iconFile !!}</span>
         <span class="info">
           <span class="name">{{ $item['name'] }}</span>
           <span class="path">{{ $item['path'] }}</span>
         </span>
-        <span class="meta">{{ $item['size_label'] }}</span>
+        <span class="meta">
+          <span class="size">{{ $item['size_label'] }}</span>
+          <span class="when">{{ $item['deleted_at'] }}</span>
+        </span>
         <button class="restore" data-path="{{ $item['path'] }}">
           {!! $iconRestore !!}
           <span>Restore</span>
@@ -131,7 +161,9 @@
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
   const listEl = document.getElementById("list");
   const emptyEl = document.getElementById("empty");
+  const toolbarEl = document.getElementById("toolbar");
   const countLabel = document.getElementById("countLabel");
+  const sortEl = document.getElementById("sort");
   const toastEl = document.getElementById("toast");
 
   let toastTimer = null;
@@ -147,8 +179,26 @@
     countLabel.textContent = n + (n === 1 ? " item" : " items");
     listEl.style.display = n ? "" : "none";
     emptyEl.style.display = n ? "none" : "";
-    if (!n) countLabel.style.display = "none";
+    toolbarEl.style.display = n ? "" : "none";
   }
+
+  function sortRows(mode) {
+    const rows = Array.from(listEl.querySelectorAll(".row"));
+    rows.sort((a, b) => {
+      if (mode === "name") {
+        return (a.dataset.name || "").localeCompare(b.dataset.name || "", undefined, { numeric: true, sensitivity: "base" });
+      }
+      const da = Number(a.dataset.deleted) || 0;
+      const db = Number(b.dataset.deleted) || 0;
+      return mode === "oldest" ? da - db : db - da;
+    });
+    rows.forEach(r => listEl.appendChild(r));
+    sortEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.sort === mode));
+  }
+
+  sortEl.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => sortRows(btn.dataset.sort));
+  });
 
   listEl.querySelectorAll(".restore").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -178,6 +228,8 @@
       }
     });
   });
+
+  if (listEl.querySelector(".row")) sortRows("newest");
 })();
 </script>
 </body>
