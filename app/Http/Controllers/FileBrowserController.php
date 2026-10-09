@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class FileBrowserController extends Controller
 {
@@ -39,7 +40,9 @@ class FileBrowserController extends Controller
             abort(404);
         }
 
-        return response()->json($listing);
+        return response()->json($listing, 200, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+        ]);
     }
 
     /**
@@ -196,6 +199,14 @@ class FileBrowserController extends Controller
      */
     private function trashItems(Request $request, bool $keepOnly)
     {
+        Log::info('Trash operation requested', [
+            'keep_only' => $keepOnly,
+            'path' => $request->input('path'),
+            'paths' => $request->input('paths'),
+            'content_type' => $request->header('Content-Type'),
+            'user_agent' => $request->userAgent(),
+        ]);
+
         $data = $request->validate([
             'path' => ['nullable', 'string'],
             'paths' => ['array'],
@@ -228,16 +239,34 @@ class FileBrowserController extends Controller
 
         $trash = rtrim((string) config('phone.trash_path'), '/');
 
-        if (! is_dir($trash) && ! mkdir($trash, 0775, true) && ! is_dir($trash)) {
-            return response()->json(['ok' => false, 'error' => 'Cannot create trash directory.'], 500);
+        if (! is_dir($trash)) {
+            @mkdir($trash, 0775, true);
         }
 
+        if (! is_dir($trash) || ! is_writable($trash)) {
+            Log::error('Trash directory is not usable', [
+                'trash' => $trash,
+                'is_dir' => is_dir($trash),
+                'is_writable' => is_dir($trash) && is_writable($trash),
+            ]);
+
+            return response()->json([
+                'ok' => false,
+                'moved' => 0,
+                'error' => 'The trash directory is not writable: '.$trash,
+            ], 500);
+        }
+
+        $expected = count($targets);
         $moved = 0;
+        $failed = [];
 
         foreach ($targets as $relative) {
             $absolute = $this->resolve($relative);
 
             if ($absolute === null || $absolute === $current) {
+                $failed[] = $relative;
+
                 continue;
             }
 
@@ -245,10 +274,41 @@ class FileBrowserController extends Controller
 
             if (@rename($absolute, $destination)) {
                 $moved++;
+            } else {
+                $failed[] = $relative;
             }
         }
 
-        return response()->json(['ok' => true, 'moved' => $moved]);
+        if ($moved === 0 && $expected > 0) {
+            Log::error('Trash move failed for every item', [
+                'trash' => $trash,
+                'current' => $currentRelative,
+                'failed' => $failed,
+            ]);
+
+            return response()->json([
+                'ok' => false,
+                'moved' => 0,
+                'expected' => $expected,
+                'failed' => $failed,
+                'error' => 'Could not move any items to the trash (check permissions on the trash directory).',
+            ], 500);
+        }
+
+        if ($failed !== []) {
+            Log::warning('Trash move partially failed', [
+                'trash' => $trash,
+                'current' => $currentRelative,
+                'failed' => $failed,
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'moved' => $moved,
+            'expected' => $expected,
+            'failed' => $failed,
+        ]);
     }
 
     /**

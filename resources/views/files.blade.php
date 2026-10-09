@@ -373,6 +373,8 @@
   .lb-btn svg { width: 15px; height: 15px; }
   .lb-btn.dl { background: var(--accent); }
   .lb-btn.dl:hover { background: #7fc04d; }
+  .lb-btn.del { background: var(--danger); }
+  .lb-btn.del:hover { background: #c53f30; }
 
   .lightbox img {
     max-width: min(92vw, 880px);
@@ -466,6 +468,10 @@
   <div class="lb-bar">
     <span class="lb-name" id="lbName"></span>
     <div class="lb-actions">
+      <button class="lb-btn del" id="lbDel" title="Delete">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8A.8.8 0 0 1 10.3 4h3.4a.8.8 0 0 1 .8.8V7M6.2 7l.8 12.2a1.8 1.8 0 0 0 1.8 1.7h6.4a1.8 1.8 0 0 0 1.8-1.7L17.8 7"/><path d="M10 11v6M14 11v6"/></svg>
+        <span>Delete</span>
+      </button>
       <a class="lb-btn dl" id="lbDl" download>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M4.5 20h15"/></svg>
         <span>Download</span>
@@ -512,6 +518,7 @@
   let selecting = false;
   const selected = new Set();   // stores entry.path values
   let pressTimer = null;
+  let longPressed = false;
 
   let toastTimer = null;
   function toast(msg) {
@@ -539,7 +546,10 @@
   async function navigate(p, push) {
     let res;
     try {
-      res = await fetch(listUrl + "?path=" + encodeURIComponent(p || ""), { headers: { "Accept": "application/json" } });
+      res = await fetch(listUrl + "?path=" + encodeURIComponent(p || "") + "&_=" + Date.now(), {
+        headers: { "Accept": "application/json" },
+        cache: "no-store",
+      });
     } catch (e) {
       toast("Could not load folder");
       return;
@@ -576,12 +586,26 @@
 
   function bindSelectPress(el, item) {
     el.addEventListener("pointerdown", () => {
+      longPressed = false;
       if (selecting) return;
       clearTimeout(pressTimer);
-      pressTimer = setTimeout(() => { if (!selecting) setSelecting(true, item.path); }, 480);
+      pressTimer = setTimeout(() => {
+        if (!selecting) {
+          longPressed = true;
+          setSelecting(true, item.path);
+        }
+      }, 480);
     });
     ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
       el.addEventListener(ev, () => clearTimeout(pressTimer)));
+  }
+
+  // Returns true if the click was the tail of a long-press and should be ignored.
+  function consumedByLongPress(e) {
+    if (!longPressed) return false;
+    longPressed = false;
+    e.preventDefault();
+    return true;
   }
 
   function toggleSelected(item, el) {
@@ -638,7 +662,9 @@
       row.appendChild(hint);
     }
 
-    row.addEventListener("click", () => {
+    row.addEventListener("click", (e) => {
+      if (e.detail > 1) return;             // ignore the 2nd click of a double-click
+      if (consumedByLongPress(e)) return;
       if (selecting) return toggleSelected(item, row);
       if (item.type === "dir") navigate(item.path);
       else download(item);
@@ -675,7 +701,9 @@
 
     tile.append(img, tname, tcheck);
 
-    tile.addEventListener("click", () => {
+    tile.addEventListener("click", (e) => {
+      if (e.detail > 1) return;             // ignore the 2nd click of a double-click
+      if (consumedByLongPress(e)) return;
       if (selecting) return toggleSelected(item, tile);
       openLightbox(item);
     });
@@ -759,18 +787,21 @@
   });
 
   /* ---------- deletions ---------- */
-  async function act(url, method) {
+  async function act(url, method, paths) {
     const res = await fetch(url, {
       method,
+      cache: "no-store",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "X-CSRF-TOKEN": csrf,
       },
-      body: JSON.stringify({ path: dir.path, paths: Array.from(selected) }),
+      body: JSON.stringify({ path: dir.path, paths: paths || Array.from(selected) }),
     });
-    if (!res.ok) throw new Error("request failed");
-    return res.json();
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((data && data.error) || "Request failed (" + res.status + ")");
+    return data || {};
   }
 
   delBtn.addEventListener("click", async () => {
@@ -780,11 +811,12 @@
       if (paths.has(el.dataset.path)) el.classList.add("dying");
     });
     try {
-      await act(destroyUrl, "DELETE");
-      toast("Moved to trash");
+      const r = await act(destroyUrl, "DELETE", Array.from(selected));
+      const n = r.moved || 0;
+      toast(n + (n === 1 ? " item" : " items") + " moved to trash");
       setTimeout(() => navigate(dir.path, false), 240);
     } catch (e) {
-      toast("Delete failed");
+      toast(e.message || "Delete failed");
       sectionsEl.querySelectorAll(".dying").forEach(el => el.classList.remove("dying"));
     }
   });
@@ -792,16 +824,20 @@
   keepBtn.addEventListener("click", async () => {
     if (!selected.size) return;
     try {
-      await act(keepUrl, "POST");
-      toast("Moved to trash");
+      const r = await act(keepUrl, "POST", Array.from(selected));
+      const n = r.moved || 0;
+      toast(n + (n === 1 ? " item" : " items") + " moved to trash");
       setTimeout(() => navigate(dir.path, false), 240);
     } catch (e) {
-      toast("Delete failed");
+      toast(e.message || "Delete failed");
     }
   });
 
   /* ---------- lightbox ---------- */
+  let lightboxItem = null;
+
   function openLightbox(item) {
+    lightboxItem = item;
     lbImg.src = item.url;
     lbImg.alt = item.name;
     lbName.textContent = item.name;
@@ -814,6 +850,19 @@
 
   $("lbClose").addEventListener("click", closeLightbox);
   lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
+
+  $("lbDel").addEventListener("click", async () => {
+    if (!lightboxItem) return;
+    const item = lightboxItem;
+    try {
+      await act(destroyUrl, "DELETE", [item.path]);
+      closeLightbox();
+      toast("1 item moved to trash");
+      setTimeout(() => navigate(dir.path, false), 240);
+    } catch (e) {
+      toast(e.message || "Delete failed");
+    }
+  });
 
   /* ---------- controls ---------- */
   upBtn.addEventListener("click", () => {
