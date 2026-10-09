@@ -83,6 +83,8 @@ class FileBrowserController extends Controller
 
     /**
      * Show the contents of the trash directory (the "Trash" button target).
+     * Lists every trashed file with its original relative path so it can be
+     * restored to where it came from.
      */
     public function trash()
     {
@@ -90,29 +92,96 @@ class FileBrowserController extends Controller
         $items = [];
 
         if (is_dir($trash)) {
-            foreach (scandir($trash) ?: [] as $name) {
-                if ($name === '.' || $name === '..') {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($trash, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::LEAVES_ONLY
+            );
+
+            foreach ($iterator as $file) {
+                if (! $file->isFile()) {
                     continue;
                 }
 
-                $full = $trash.DIRECTORY_SEPARATOR.$name;
-                $isDir = is_dir($full);
-                $size = is_file($full) ? (int) filesize($full) : 0;
+                $full = $file->getPathname();
+                $relative = ltrim(str_replace('\\', '/', substr($full, strlen($trash))), '/');
+                $size = (int) $file->getSize();
 
                 $items[] = [
-                    'name' => $name,
-                    'type' => $isDir ? 'dir' : 'file',
+                    'name' => $file->getFilename(),
+                    'path' => $relative,
                     'size' => $size,
-                    'size_label' => $isDir ? '' : $this->humanSize($size),
+                    'size_label' => $this->humanSize($size),
                 ];
             }
 
-            usort($items, fn (array $a, array $b): int => strnatcasecmp($a['name'], $b['name']));
+            usort($items, fn (array $a, array $b): int => strnatcasecmp($a['path'], $b['path']));
         }
 
         return view('trash', [
             'items' => $items,
             'trashPath' => $trash,
+        ]);
+    }
+
+    /**
+     * Restore a trashed item to its original location.
+     */
+    public function restore(Request $request)
+    {
+        $data = $request->validate([
+            'path' => ['required', 'string'],
+        ]);
+
+        $relative = $this->normalise($data['path']);
+
+        if ($relative === '') {
+            abort(422, 'No path supplied.');
+        }
+
+        $trash = rtrim((string) config('phone.trash_path'), '/');
+        $trashRoot = realpath($trash);
+        $filesRoot = realpath((string) config('phone.files_path'));
+
+        if ($trashRoot === false || $filesRoot === false) {
+            return response()->json(['ok' => false, 'error' => 'Trash or files directory is unavailable.'], 500);
+        }
+
+        $source = realpath($trashRoot.DIRECTORY_SEPARATOR.$relative);
+
+        if ($source === false || ($source !== $trashRoot && ! str_starts_with($source, $trashRoot.DIRECTORY_SEPARATOR))) {
+            return response()->json(['ok' => false, 'error' => 'That item is not in the trash.'], 404);
+        }
+
+        $destination = $filesRoot.DIRECTORY_SEPARATOR.$relative;
+        $parent = dirname($destination);
+
+        if (! is_dir($parent)) {
+            @mkdir($parent, 0775, true);
+        }
+
+        if (! is_dir($parent) || ! is_writable($parent)) {
+            Log::error('Restore target directory is not writable', ['parent' => $parent]);
+
+            return response()->json(['ok' => false, 'error' => 'Could not write to the original location.'], 500);
+        }
+
+        // Never overwrite something that is already there.
+        if (file_exists($destination)) {
+            $destination = $this->uniqueFilePath($parent, basename($destination));
+        }
+
+        if (! @rename($source, $destination)) {
+            Log::error('Restore move failed', ['source' => $source, 'destination' => $destination]);
+
+            return response()->json(['ok' => false, 'error' => 'Could not restore the item.'], 500);
+        }
+
+        $this->pruneEmptyDirectories($trashRoot, dirname($source));
+
+        return response()->json([
+            'ok' => true,
+            'path' => $relative,
+            'restored_to' => ltrim(str_replace('\\', '/', substr($destination, strlen($filesRoot))), '/'),
         ]);
     }
 
@@ -270,7 +339,7 @@ class FileBrowserController extends Controller
                 continue;
             }
 
-            $destination = $this->uniqueDestination($trash, basename($absolute));
+            $destination = $this->trashDestination($trash, $relative);
 
             if (@rename($absolute, $destination)) {
                 $moved++;
@@ -414,19 +483,62 @@ class FileBrowserController extends Controller
         return $count;
     }
 
-    private function uniqueDestination(string $trash, string $name): string
+    /**
+     * Build the trash destination for a file, preserving its relative path.
+     */
+    private function trashDestination(string $trash, string $relative): string
     {
-        $destination = $trash.'/'.$name;
+        $relative = $this->normalise($relative);
+        $destination = $trash.'/'.$relative;
+        $parent = dirname($destination);
 
-        if (! file_exists($destination)) {
-            return $destination;
+        if (! is_dir($parent)) {
+            @mkdir($parent, 0775, true);
+        }
+
+        if (file_exists($destination)) {
+            $destination = $this->uniqueFilePath($parent, basename($destination));
+        }
+
+        return $destination;
+    }
+
+    /**
+     * Return a non-colliding file path inside $directory.
+     */
+    private function uniqueFilePath(string $directory, string $name): string
+    {
+        $candidate = rtrim($directory, '/').'/'.$name;
+
+        if (! file_exists($candidate)) {
+            return $candidate;
         }
 
         $extension = pathinfo($name, PATHINFO_EXTENSION);
         $base = pathinfo($name, PATHINFO_FILENAME);
         $suffix = $extension === '' ? '' : '.'.$extension;
 
-        return $trash.'/'.$base.'-'.time().'-'.bin2hex(random_bytes(3)).$suffix;
+        return rtrim($directory, '/').'/'.$base.'-'.date('Ymd-His').'-'.bin2hex(random_bytes(3)).$suffix;
+    }
+
+    /**
+     * Remove now-empty directories left behind in the trash after a restore.
+     */
+    private function pruneEmptyDirectories(string $root, string $start): void
+    {
+        $root = rtrim($root, '/');
+        $directory = $start;
+
+        while ($directory !== $root && str_starts_with($directory, $root.DIRECTORY_SEPARATOR)) {
+            $entries = array_diff(scandir($directory) ?: [], ['.', '..']);
+
+            if ($entries !== []) {
+                return;
+            }
+
+            @rmdir($directory);
+            $directory = dirname($directory);
+        }
     }
 
     private function encodePath(string $relative): string

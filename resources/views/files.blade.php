@@ -63,6 +63,16 @@
   .ibtn.trash:hover { border-color: #bcd4a4; color: var(--accent-ink); background: var(--accent-soft); }
   .ibtn.invert:hover { border-color: #b9cfee; color: var(--keep); background: #eaf1fb; }
   .ibtn.select.active { background: var(--accent-soft); border-color: #b7d49c; color: var(--accent-ink); }
+  .ibtn.labeled {
+    width: auto;
+    padding: 0 13px;
+    gap: 7px;
+    display: inline-flex;
+    align-items: center;
+    font-size: .85rem;
+    font-weight: 650;
+  }
+  .ibtn.labeled svg { width: 16px; height: 16px; }
 
   /* ---------- path row ---------- */
   .pathrow { display: flex; align-items: center; gap: 8px; padding: 10px 0 14px; }
@@ -410,6 +420,8 @@
     .row .meta { display: none; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
     .action span.label { display: none; }
+    .ibtn.labeled span { display: none; }
+    .ibtn.labeled { width: 38px; padding: 0; }
   }
 </style>
 </head>
@@ -428,8 +440,9 @@
       <button class="ibtn invert" id="invertBtn" title="Reverse selection" aria-label="Reverse selection">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg>
       </button>
-      <button class="ibtn trash" id="trashBtn" title="Trash" aria-label="Trash">
+      <button class="ibtn trash labeled" id="trashBtn" title="View trash" aria-label="View trash">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8A.8.8 0 0 1 10.3 4h3.4a.8.8 0 0 1 .8.8V7M6.2 7l.8 12.2a1.8 1.8 0 0 0 1.8 1.7h6.4a1.8 1.8 0 0 0 1.8-1.7L17.8 7"/><path d="M10 11v6M14 11v6"/></svg>
+        <span>Trash</span>
       </button>
     </div>
   </div>
